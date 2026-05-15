@@ -560,6 +560,21 @@ module attributes {omp.is_target_device = false, omp.target_triples = ["amdgcn-a
     llvm.return
   }
 
+  llvm.func @target_data_if_map_iterator_dynamic(
+      %arr: !llvm.ptr, %lb: i64, %ub: i64, %step: i64, %cond: i1) {
+    %it = omp.iterator(%iv: i64) = (%lb to %ub step %step) {
+      %elem = llvm.getelementptr %arr[%iv] : (!llvm.ptr, i64) -> !llvm.ptr, i32
+      %map = omp.map.info var_ptr(%elem : !llvm.ptr, i32)
+          map_clauses(tofrom) capture(ByRef) -> !llvm.ptr {name = ""}
+      omp.yield(%map : !llvm.ptr)
+    } -> !omp.iterated<!llvm.ptr>
+
+    omp.target_data if(%cond) map_iterated(%it : !omp.iterated<!llvm.ptr>) {
+      omp.terminator
+    }
+    llvm.return
+  }
+
   llvm.func @target_enter_data_map_iterator_dynamic(
       %arr: !llvm.ptr, %lb: i64, %ub: i64, %step: i64) {
     %it = omp.iterator(%iv: i64) = (%lb to %ub step %step) {
@@ -679,6 +694,19 @@ module attributes {omp.is_target_device = false, omp.target_triples = ["amdgcn-a
 // TARGET: store i64 3, ptr %{{.*}}
 // TARGET: call void @__tgt_target_data_begin_mapper(ptr @{{.*}}, i64 -1, i32 3, ptr %[[BASEPTRS4]]
 // TARGET: call void @__tgt_target_data_end_mapper(ptr @{{.*}}, i64 -1, i32 3, ptr %[[BASEPTRS4]], ptr %{{.*}}, ptr %{{.*}}, ptr %[[ENDTYPES4]]
+
+// target_data with an if clause hoists dynamic count and array allocas before
+// the begin/end control-flow split.
+// TARGET-LABEL: define void @target_data_if_map_iterator_dynamic
+// TARGET-SAME: (ptr %[[ARRIF:[0-9]+]], i64 %[[LBIF:[0-9]+]], i64 %[[UBIF:[0-9]+]], i64 %[[STEPIF:[0-9]+]], i1 %[[CONDIF:[0-9]+]])
+// TARGET: %[[DIFFIF:.*]] = sub i64 %[[UBIF]], %[[LBIF]]
+// TARGET: %[[DIVIF:.*]] = sdiv i64 %[[DIFFIF]], %[[STEPIF]]
+// TARGET: %[[TRIPSIF:.*]] = add i64 %[[DIVIF]], 1
+// TARGET: %[[TOTALIF:.*]] = add i64 0, %{{.*}}
+// TARGET: %[[BASEPTRSIF:[^ ]*offload_baseptrs]] = alloca ptr, i64 %[[TOTALIF]]
+// TARGET: br i1 %[[CONDIF]], label %omp_if.then
+// TARGET: call void @__tgt_target_data_begin_mapper(ptr @{{.*}}, i64 -1, i32 %{{.*}}, ptr %[[BASEPTRSIF]]
+// TARGET: call void @__tgt_target_data_end_mapper(ptr @{{.*}}, i64 -1, i32 %{{.*}}, ptr %[[BASEPTRSIF]]
 
 // Dynamic iterator bounds produce a runtime map count and VLA offload arrays.
 // TARGET-LABEL: define void @target_enter_data_map_iterator_dynamic

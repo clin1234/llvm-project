@@ -7,8 +7,9 @@
 program map_motion_iterator
   implicit none
   integer, parameter :: n = 8
-  integer :: a(n), b(n), c(n), d(n)
-  integer :: i
+  integer :: a(n), b(n), c(n), d(n), e(n)
+  integer :: i, dyn_n, dyn_step
+  logical :: use_device
 
   do i = 1, n
     a(i) = i
@@ -89,5 +90,30 @@ program map_motion_iterator
 
   ! CHECK: target data: 21 2 43 4 65 6 87 8
   print *, "target data:", d
+
+  dyn_n = n
+  dyn_step = 2
+  use_device = .true.
+  do i = 1, n
+    e(i) = i
+  end do
+  !$omp target data if(use_device) &
+  !$omp& map(iterator(i = 1:dyn_n:dyn_step), tofrom: e(i))
+    !$omp target map(present, alloc: e(1))
+      e(1) = 31
+    !$omp end target
+    !$omp target map(present, alloc: e(3))
+      e(3) = 53
+    !$omp end target
+    !$omp target map(present, alloc: e(5))
+      e(5) = 75
+    !$omp end target
+    !$omp target map(present, alloc: e(7))
+      e(7) = 97
+    !$omp end target
+  !$omp end target data
+
+  ! CHECK: target data if: 31 2 53 4 75 6 97 8
+  print *, "target data if:", e
 
 end program map_motion_iterator

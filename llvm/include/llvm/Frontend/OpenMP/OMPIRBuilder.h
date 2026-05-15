@@ -2921,6 +2921,12 @@ public:
       InsertPointTy AllocaIP = {}, unsigned DeviceAddrCBIndex = 0,
       function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr);
 
+  /// Allocate runtime-sized offloading arrays using \p Info.TotalMapCount.
+  LLVM_ABI void emitDynamicOffloadingArraysAllocas(InsertPointTy AllocaIP,
+                                                   InsertPointTy CodeGenIP,
+                                                   TargetDataInfo &Info,
+                                                   bool EmitDebug);
+
   /// Generate a target region entry call and host fallback call.
   ///
   /// \param Loc The location at which the request originated and is fulfilled.

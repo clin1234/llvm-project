@@ -8477,13 +8477,23 @@ OpenMPIRBuilder::InsertPointOrErrorTy OpenMPIRBuilder::createTargetData(
   Builder.restoreIP(CodeGenIP);
 
   bool IsStandAlone = !BodyGenCB;
-  MapInfosTy *MapInfo;
+  MapInfosTy *MapInfo = nullptr;
+
+  if (!IsStandAlone && DynMapEntriesCB) {
+    MapInfo = &GenMapInfoCB(Builder.saveIP());
+    if (Info.TotalMapCount)
+      emitDynamicOffloadingArraysAllocas(AllocaIP, Builder.saveIP(), Info,
+                                         DynMapEntriesCB ||
+                                             !MapInfo->Names.empty());
+  }
+
   // Generate the code for the opening of the data environment. Capture all the
   // arguments of the runtime call by reference because they are used in the
   // closing of the region.
   auto BeginThenGen = [&](InsertPointTy AllocaIP, InsertPointTy CodeGenIP,
                           ArrayRef<BasicBlock *> DeallocBlocks) -> Error {
-    MapInfo = &GenMapInfoCB(Builder.saveIP());
+    if (!MapInfo)
+      MapInfo = &GenMapInfoCB(Builder.saveIP());
     if (Error Err = emitOffloadingArrays(
             AllocaIP, Builder.saveIP(), *MapInfo, Info, CustomMapperCB,
             /*IsNonContiguous=*/true, DeviceAddrCB, DynMapEntriesCB))
@@ -10509,12 +10519,53 @@ void OpenMPIRBuilder::emitOffloadingArraysMapEntry(
   }
 }
 
+void OpenMPIRBuilder::emitDynamicOffloadingArraysAllocas(
+    InsertPointTy AllocaIP, InsertPointTy CodeGenIP, TargetDataInfo &Info,
+    bool EmitDebug) {
+  assert(Info.TotalMapCount && "expected runtime map entry count");
+
+  Builder.restoreIP(
+      (isa<Constant>(Info.TotalMapCount) || isa<Argument>(Info.TotalMapCount))
+          ? AllocaIP
+          : CodeGenIP);
+  Type *PtrTy = Builder.getPtrTy();
+  Type *Int64Ty = Builder.getInt64Ty();
+  Info.RTArgs.BasePointersArray =
+      Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_baseptrs");
+  Info.RTArgs.PointersArray =
+      Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_ptrs");
+  Info.RTArgs.SizesArray =
+      Builder.CreateAlloca(Int64Ty, Info.TotalMapCount, ".offload_sizes");
+  Info.RTArgs.MapTypesArray =
+      Builder.CreateAlloca(Int64Ty, Info.TotalMapCount, ".offload_maptypes");
+  Info.RTArgs.MappersArray =
+      Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_mappers");
+
+  Info.EmitDebug = Info.EmitDebug || EmitDebug;
+  if (Info.EmitDebug)
+    Info.RTArgs.MapNamesArray =
+        Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_mapnames");
+  else
+    Info.RTArgs.MapNamesArray =
+        Constant::getNullValue(PointerType::getUnqual(Builder.getContext()));
+
+  if (Info.separateBeginEndCalls())
+    Info.RTArgs.MapTypesArrayEnd = Builder.CreateAlloca(
+        Int64Ty, Info.TotalMapCount, ".offload_maptypes_end");
+
+  restoreIPandDebugLoc(Builder, CodeGenIP);
+}
+
 Error OpenMPIRBuilder::emitOffloadingArrays(
     InsertPointTy AllocaIP, InsertPointTy CodeGenIP, MapInfosTy &CombinedInfo,
     TargetDataInfo &Info, CustomMapperCallbackTy CustomMapperCB,
     bool IsNonContiguous,
     function_ref<void(unsigned int, Value *)> DeviceAddrCB,
     DynMapEntriesCallbackTy DynMapEntriesCB) {
+
+  TargetDataRTArgs PreallocatedRTArgs = Info.RTArgs;
+  bool HasPreallocatedDynamicStorage =
+      Info.TotalMapCount && Info.RTArgs.BasePointersArray;
 
   // Reset the array information.
   Info.clearArrayInfo();
@@ -10538,37 +10589,14 @@ Error OpenMPIRBuilder::emitOffloadingArrays(
       return Builder.getInt64(Mapping);
     };
 
-    Builder.restoreIP(
-        (isa<Constant>(Info.TotalMapCount) || isa<Argument>(Info.TotalMapCount))
-            ? AllocaIP
-            : CodeGenIP);
     Type *PtrTy = Builder.getPtrTy();
-    Type *Int64Ty = Builder.getInt64Ty();
-    Info.RTArgs.BasePointersArray =
-        Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_baseptrs");
-    Info.RTArgs.PointersArray =
-        Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_ptrs");
-    Info.RTArgs.SizesArray =
-        Builder.CreateAlloca(Int64Ty, Info.TotalMapCount, ".offload_sizes");
-    Info.RTArgs.MapTypesArray =
-        Builder.CreateAlloca(Int64Ty, Info.TotalMapCount, ".offload_maptypes");
-    Info.RTArgs.MappersArray =
-        Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_mappers");
-
-    Info.EmitDebug =
-        Info.EmitDebug || DynMapEntriesCB || !CombinedInfo.Names.empty();
-    if (Info.EmitDebug)
-      Info.RTArgs.MapNamesArray =
-          Builder.CreateAlloca(PtrTy, Info.TotalMapCount, ".offload_mapnames");
+    if (HasPreallocatedDynamicStorage)
+      Info.RTArgs = PreallocatedRTArgs;
     else
-      Info.RTArgs.MapNamesArray =
-          Constant::getNullValue(PointerType::getUnqual(Builder.getContext()));
+      emitDynamicOffloadingArraysAllocas(AllocaIP, CodeGenIP, Info,
+                                         DynMapEntriesCB ||
+                                             !CombinedInfo.Names.empty());
 
-    if (Info.separateBeginEndCalls())
-      Info.RTArgs.MapTypesArrayEnd = Builder.CreateAlloca(
-          Int64Ty, Info.TotalMapCount, ".offload_maptypes_end");
-
-    restoreIPandDebugLoc(Builder, CodeGenIP);
     for (unsigned I = 0; I < Info.NumberOfPtrs; ++I) {
       bool IsNonContigEntry =
           IsNonContiguous &&

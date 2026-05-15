@@ -6608,8 +6608,8 @@ convertOmpTargetData(Operation *op, llvm::IRBuilderBase &builder,
       offset = builder.CreateAdd(offset, iterInfo.getTotalTrips());
     }
 
-    ompBuilder->updateToLocation(llvm::OpenMPIRBuilder::LocationDescription(
-        builder));
+    ompBuilder->updateToLocation(
+        llvm::OpenMPIRBuilder::LocationDescription(builder));
     return llvm::Error::success();
   };
 
