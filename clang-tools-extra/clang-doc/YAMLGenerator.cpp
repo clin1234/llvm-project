@@ -34,8 +34,8 @@ LLVM_YAML_IS_SEQUENCE_VECTOR(OwnedPtr<CommentInfo>)
 namespace llvm {
 
 template <typename T>
-bool operator==(const llvm::simple_ilist<T> &LHS,
-                const llvm::simple_ilist<T> &RHS) {
+static bool operator==(const llvm::simple_ilist<T> &LHS,
+                       const llvm::simple_ilist<T> &RHS) {
   auto LIt = LHS.begin(), LEnd = LHS.end();
   auto RIt = RHS.begin(), REnd = RHS.end();
   for (; LIt != LEnd && RIt != REnd; ++LIt, ++RIt) {
@@ -46,8 +46,8 @@ bool operator==(const llvm::simple_ilist<T> &LHS,
 }
 
 template <typename T>
-bool operator!=(const llvm::simple_ilist<T> &LHS,
-                const llvm::simple_ilist<T> &RHS) {
+static bool operator!=(const llvm::simple_ilist<T> &LHS,
+                       const llvm::simple_ilist<T> &RHS) {
   return !(LHS == RHS);
 }
 
